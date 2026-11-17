@@ -1,8 +1,9 @@
 """CONTORNO DO CORPO: frase andando em volta da silhueta da pessoa (3 faixas em afastamentos diferentes,
 sentidos alternados) + legenda grande no alto. Câmera quase parada (compensa tremidinha pelo muro).
 uso (na pasta da cena): python3 <skill>/scripts/efeitos/contorno.py [--ver t1 t2 ...]   (--ver: só quadros de teste)
-AJUSTE: FRASE, FAIXAS (afastamento, tamanho, velocidade, entra, cor), CHAO (y onde o caminho é cortado
-no chão), as janelas do phaseCorrelate (áreas de fundo sem a pessoa) e LEG (legenda)."""
+O texto vem da transcrição: a 1ª frase anda em volta do corpo; as seguintes aparecem grandes no alto.
+AJUSTE (cena.json → geometria): chao_y (y dos pés), janelas_fundo ([y0,y1,x0,x1] de fundo parado, sem a pessoa,
+para compensar a tremidinha), legenda_y. FAIXAS no script: afastamento, tamanho, velocidade."""
 import sys, subprocess, os, numpy as np, cv2
 from PIL import Image, ImageDraw, ImageFont
 
@@ -12,6 +13,9 @@ C = "/System/Library/Fonts/Avenir Next Condensed.ttc"
 F = {"a": (A, 8), "c": (C, 8)}
 N = len(os.listdir("quadros"))
 AMA = np.array([255, 226, 110], np.float32)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "comum"))
+from frases import frases, cfg, linhas, config
+JAN = cfg("janelas_fundo", [[80, 1450, 20, 330], [80, 1450, 740, 1060]])   # [y0, y1, x0, x1] de fundo sem a pessoa
 
 # ---------- câmera: deslocamento do muro (sem a pessoa) ----------
 if not os.path.exists("desloc.npy"):
@@ -19,9 +23,8 @@ if not os.path.exists("desloc.npy"):
     d = []
     for i in range(1, N + 1):
         g = cv2.imread(f"quadros/{i:05d}.jpg", 0).astype(np.float32)
-        dl = cv2.phaseCorrelate(g0[80:1450, 20:330], g[80:1450, 20:330])[0]
-        dr = cv2.phaseCorrelate(g0[80:1450, 740:1060], g[80:1450, 740:1060])[0]
-        d.append(((dl[0] + dr[0]) / 2, (dl[1] + dr[1]) / 2))
+        ds = [cv2.phaseCorrelate(g0[a:b, c:e], g[a:b, c:e])[0] for a, b, c, e in JAN]
+        d.append((np.mean([x for x, _ in ds]), np.mean([y for _, y in ds])))
     np.save("desloc.npy", np.array(d))
 DES = np.load("desloc.npy")
 
@@ -45,11 +48,15 @@ def corpo_suave(i):
     b = (cv2.GaussianBlur(acc, (0, 0), 6) > 0.5).astype(np.uint8)
     return cv2.morphologyEx(b, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (71, 71)))
 
-# ---------- faixas ----------
-FRASE = "TEXTO  CONTORNANDO  SEU  CORPO  •  "
-#        afastamento, tamanho, velocidade px/s, entra, cor dominante
-FAIXAS = [(48, 56, 150, 0.46, "b"), (120, 64, -130, 1.24, "y"), (200, 72, 110, 1.98, "b")]
-CHAO = 1595   # corta o caminho no chão (sem texto de cabeça pra baixo)
+# ---------- faixas: a 1ª frase anda em volta do corpo (3 faixas, sentidos alternados) ----------
+FR = frases(config().get("max_palavras", 8))
+F0 = FR[0]
+FRASE = "  ".join(w["t"].upper().strip(".,!?") for w in F0) + "  •  "
+CHAVES = {w["t"].upper().strip(".,!?") for w in F0 if w["chave"]}
+_e = [F0[0]["s"], F0[len(F0) // 3]["s"], F0[2 * len(F0) // 3]["s"]]
+#        afastamento (px), tamanho, velocidade px/s, entra, cor dominante
+FAIXAS = [(48, 56, 150, _e[0], "b"), (120, 64, -130, _e[1], "y"), (200, 72, 110, _e[2], "b")]
+CHAO = cfg("chao_y", 1595)   # y dos pés: corta o caminho no chão (sem texto de cabeça pra baixo)
 
 def caminho(corpo, r, dy):
     dist = cv2.distanceTransform((1 - corpo).astype(np.uint8), cv2.DIST_L2, 5)
@@ -96,7 +103,7 @@ def faixa(can, cany, c, s, size, vel, t, al, cor):
     x0 = (vel * t) % P
     # palavras em amarelo alternadas por faixa
     pal = FRASE.split("  ")
-    amarelas = {"CONTORNANDO"} if cor == "b" else {"TEXTO", "SEU", "CORPO", "CONTORNANDO"}
+    amarelas = CHAVES if cor == "b" else {w.strip("•") for w in FRASE.split()}
     idx_y = set(); p = 0
     for w in FRASE.split(" "):
         if w in amarelas:
@@ -132,15 +139,18 @@ def faixa(can, cany, c, s, size, vel, t, al, cor):
             pos += w
         n0 += 1
 
-# ---------- legenda no alto do muro ----------
-LEG = [  # (texto, tam, x, y, entra, sai, cor)
-    ("CLÁSSICO,", 300, 540, 300, 2.94, 3.74, "b"),
-    ("MARAVILHOSO,", 300, 540, 300, 3.76, 5.18, "b"),
-    ("LINDO.", 420, 540, 290, 5.20, 6.14, "y"),
-    ("NOSSA,", 230, 540, 120, 6.16, 9.0, "b"),
-    ("RESULTADO", 210, 540, 265, 6.58, 9.0, "b"),
-    ("INCRÍVEL.", 240, 540, 405, 6.84, 9.0, "y"),
-]
+# ---------- legenda grande no alto: as frases seguintes, uma de cada vez ----------
+LEG = []   # (texto, tam, x, y, entra, sai, cor)
+END = N / FPS
+LEG_Y = cfg("legenda_y", {"1": [300], "2": [200, 380], "3": [120, 265, 405]})
+for k, f in enumerate(FR[1:], 1):
+    sai = FR[k + 1][0]["s"] - 0.02 if k + 1 < len(FR) else END
+    ls = linhas(f, 11)
+    if len(ls) > 3: ls = ls[:2] + [[w for l in ls[2:] for w in l]]
+    tam = {1: 320, 2: 260, 3: 220}[len(ls)]
+    for y, l in zip(LEG_Y[str(len(ls))], ls):
+        um = len(l) == 1 and l[0]["chave"]
+        LEG.append((" ".join(w["t"].upper() for w in l), int(tam * (1.25 if um else 1)), 540, y, l[0]["s"], sai, "y" if um else "b"))
 _sp = {}
 def sprite(t, s):
     k = (t, s)

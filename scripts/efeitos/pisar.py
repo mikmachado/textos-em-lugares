@@ -1,7 +1,6 @@
 """PISAR NO TEXTO: cada frase nasce no chão logo à frente dos pés da pessoa, que vai andando e pisa nas letras.
-Câmera parada (tripé). AJUSTE: QUAD (trapézio do chão) e os blocos bloco(x, y, linhas, sai) — (x,y) é o ponto
-da tela onde ela vai pisar; confira com --ver.
-com pico de muito texto em "texto aparecendo em vários lugares diferentes".
+Câmera parada (tripé). AJUSTE (cena.json → geometria): quad_chao (trapézio do chão na tela), frente (distância à frente dos pés),
+tamanho ([corrido, palavra-chave]). Frases, tempos e posição (pés no recorte) são automáticos.
 uso (na pasta da cena): python3 <skill>/scripts/efeitos/pisar.py [--ver t1 t2 ...]   (--ver: só quadros de teste)"""
 import sys, subprocess, os, numpy as np, cv2
 from PIL import Image, ImageDraw, ImageFont
@@ -13,7 +12,7 @@ F = {"a": (A, 8), "ai": (A, 9), "c": (C, 8), "ci": (C, 9)}
 
 # ---------- chão: retângulo plano LW x LH -> trapézio com fuga em (540,680) ----------
 LW, LH = 2000, 2000
-QUAD = np.float32([[258, 840], [822, 840], [2040, 2050], [-960, 2050]])   # fuga em (540,560)
+QUAD = np.float32(__import__('json').load(open('cena.json')).get('geometria', {}).get('quad_chao', [[258, 840], [822, 840], [2040, 2050], [-960, 2050]]) if os.path.exists('cena.json') else [[258, 840], [822, 840], [2040, 2050], [-960, 2050]])   # trapézio do chão (tela)
 M = cv2.getPerspectiveTransform(np.float32([[0, 0], [LW, 0], [LW, LH], [0, LH]]), QUAD)
 Minv = np.linalg.inv(M)
 
@@ -62,24 +61,30 @@ def bloco(x, y, linhas, sai):
         linha("chao", pal, *chao_p_tela(u, v), sai)
         v += alt / 2 + 30
 
-# cada frase aparece logo à frente dos pés dela, onde ela vai pisar
-bloco(560, 850, [[("CARA,", "c", 420, 0.82, "b")],
-                 [("outro", P, 300, 1.52, "b"), ("muito", P, 300, 1.68, "b")],
-                 [("BOM", "c", 420, 2.12, "b")]], 2.46)
-bloco(560, 850, [[("é o", P, 300, 2.48, "b")],
-                 [("TEXTO", "c", 420, 2.84, "y")],
-                 [("aqui no", P, 300, 3.16, "b")],
-                 [("CHÃO", "c", 420, 3.48, "y")]], 3.74)
-bloco(555, 860, [[("enquanto", P, 300, 3.76, "b"), ("você", P, 300, 4.00, "b"), ("tá", P, 300, 4.18, "b")],
-                 [("PASSANDO", "c", 420, 4.28, "y")],          # ela pisa aqui em ~5.3 s
-                 [("em", P, 300, 4.68, "b"), ("cima", P, 300, 4.98, "b")],
-                 [("DELE,", "c", 420, 5.24, "b")]], 6.0)
-bloco(500, 1060, [[("mas", P, 300, 5.56, "b"), ("pra", P, 300, 5.68, "b"), ("isso", P, 300, 5.82, "b"), ("a", P, 300, 6.02, "b")],
-                  [("CÂMERA", "c", 420, 6.14, "b")]], 6.36)
-FIMC = 9.6
-bloco(520, 1060, [[("tem", P, 220, 6.36, "b"), ("que", P, 220, 6.48, "b"), ("ficar", P, 220, 6.54, "b")],
-                  [("BEM", "c", 300, 6.68, "y")],               # ela pisa aqui em ~8.0 s
-                  [("PARADA,", "c", 300, 6.96, "y"), ("tá?", P, 220, 7.44, "b")]], FIMC)
+# ---------- frases AUTOMÁTICAS: cada uma nasce logo à frente dos pés, no instante em que começa ----------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "comum"))
+from frases import frases, cfg, linhas, config
+FR = frases(config().get("max_palavras", 5))   # frases curtas: cada bloco cabe no chão
+END = len(os.listdir("quadros")) / FPS
+FRENTE = cfg("frente", 140)          # quanto à frente dos pés (unidades do plano do chão) a frase começa
+TAM = cfg("tamanho", [340, 480])    # [texto corrido, palavra-chave]
+def pes(t):
+    """ponto entre os pés (tela) no tempo t, pelo recorte"""
+    i = min(max(int(round(t * FPS)) + 1, 1), len(os.listdir("quadros")))
+    d = "mask_fina" if os.path.exists("mask_fina") else "mask"
+    m = cv2.imread(f"{d}/{i:05d}.png", 0)
+    ys, xs = np.where(m > 128)
+    if len(ys) == 0: return W / 2, H * 0.6
+    y1 = ys.max(); sel = ys > y1 - 25
+    return float(np.median(xs[sel])), float(y1)
+for k, f in enumerate(FR):
+    sai = FR[k + 1][0]["s"] - 0.02 if k + 1 < len(FR) else END
+    x, y = pes(f[0]["s"])
+    u, v = tela_p_chao(x, y)
+    x, y = chao_p_tela(u, v + FRENTE)
+    ls = [[(w["t"].upper() if w["chave"] else w["t"], "c" if w["chave"] else P, TAM[1] if w["chave"] else TAM[0],
+            w["s"], "y" if w["chave"] else "b") for w in l] for l in linhas(f, 16)][:4]
+    bloco(x, y, ls, sai)
 
 # ---------- desenho ----------
 _sp = {}

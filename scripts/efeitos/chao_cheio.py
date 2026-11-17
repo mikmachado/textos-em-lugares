@@ -1,8 +1,10 @@
 """CHÃO CHEIO (ótimo pro fechamento/CTA): chão inteiro coberto de fileiras de TEXTO (deslizando, sentidos
 alternados) que surgem em cascata, + chamada grande pintada no chão. A pessoa anda por cima.
 uso (na pasta da cena): python3 <skill>/scripts/efeitos/chao_cheio.py [--ver t1 t2 ...]   (--ver: só quadros de teste)
-AJUSTE: VX, VY (ponto de fuga do chão), F0, polígono CHAO (onde é chão no quadro 1), a palavra das fileiras
-(sprite("TEXTO")), o instante em que surgem (0.9 s) e LINHAS (chamada: texto, Z perto, Z longe, largura, cor)."""
+O texto vem da transcrição: a 1ª palavra-chave da 1ª frase (ex.: "Comenta TEXTO") fica gigante perto da câmera e é a
+palavra que cobre o chão quando é falada; o resto da fala sobe em até 4 linhas mais ao fundo.
+AJUSTE (cena.json → geometria): fuga ([x, y] ponto de fuga do chão no quadro 1), focal, chao_poligono (onde é chão),
+palavra_chao (outra palavra pras fileiras)."""
 import sys, subprocess, os, json, numpy as np, cv2
 from PIL import Image, ImageDraw, ImageFont
 
@@ -13,11 +15,19 @@ HS = [np.array(h, np.float64) for h in json.load(open("homografias.json"))]
 N = len(HS)
 
 # ---------- chão (quadro 1): ponto de fuga (553,720), f=1550, altura 1 ----------
-VX, VY, F0 = 553.0, 720.0, 1550.0
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "comum"))
+from frases import frases, cfg, config
+FR = frases(config().get("max_palavras", 8))
+F0W = FR[0]
+_k = [j for j, w in enumerate(F0W) if w["chave"]]
+KJ = _k[0] if _k else len(F0W) - 1                    # palavra GIGANTE da chamada (1ª palavra-chave da 1ª frase)
+PALAVRA = cfg("palavra_chao", F0W[KJ]["t"].upper().strip(".,!?"))   # a palavra que cobre o chão
+T_FIL = F0W[KJ]["s"]                                   # o chão se enche quando ela é falada
+VX, VY = cfg("fuga", [553.0, 720.0]); F0 = cfg("focal", 1550.0)   # ponto de fuga do chão (quadro 1)
 def proj(X, Z): return np.stack([VX + F0 * X / Z, VY + F0 / Z], -1)
 CHAO = np.zeros((H, W), np.uint8)
-cv2.fillPoly(CHAO, [np.int32([[0, 1290], [150, 1140], [300, 1000], [380, 905], [430, 800], [445, 765],
-                              [760, 782], [1080, 900], [1080, 1920], [0, 1920]])], 1)
+cv2.fillPoly(CHAO, [np.int32(cfg("chao_poligono", [[0, 1290], [150, 1140], [300, 1000], [380, 905], [430, 800], [445, 765],
+                                                  [760, 782], [1080, 900], [1080, 1920], [0, 1920]]))], 1)   # onde é chão
 CHAO = cv2.GaussianBlur(CHAO.astype(np.float32), (0, 0), 2)
 
 def fonte(px): return ImageFont.truetype(C, px, index=8)
@@ -35,23 +45,23 @@ XX = ((xx - VX) * ZZ / F0).astype(np.float32)
 del yy, xx
 Z0, RZ, GZ, PX = 1.22, 0.27, 0.10, 0.50        # 1ª fileira, comprimento da letra no chão, folga, passo em X
 PER = RZ + GZ
-TS = sprite("TEXTO", 240); TH, TW = TS.shape
+TS = sprite(PALAVRA, 240); TH, TW = TS.shape
 TW2 = int(TW * 1.3)                              # tile com espaço
 TILE = np.zeros((TH, TW2), np.float32); TILE[:, :TW] = TS
 RI = np.floor((ZZ - Z0) / PER).astype(np.int32)
 VV = ((RZ - (ZZ - Z0 - RI * PER)) / RZ * TH).astype(np.float32)   # topo da letra = longe
 NR = int((8.0 - Z0) / PER) + 1
 def fileiras(t, tirar=None):
-    if t < 0.88: return None, None
+    if t < T_FIL - 0.02: return None, None
     sent = np.where(RI % 2 == 0, 1.0, -1.0)
-    off = (RI % 2) * PX / 2 + sent * 0.10 * (t - 0.9)
+    off = (RI % 2) * PX / 2 + sent * 0.10 * (t - T_FIL)
     u = (XX - off) / PX
     k = np.floor(u).astype(np.int32)
     U = ((u - k) * TW2).astype(np.float32)
     a = cv2.remap(TILE, U, VV, cv2.INTER_LINEAR, borderValue=0)
     a = np.where((VV >= 0) & (VV < TH) & (RI >= 0) & (RI < NR) & abaixo, a, 0)
     # cascata: fileira mais perto primeiro
-    ta = 0.92 + 0.03 * RI
+    ta = T_FIL + 0.02 + 0.03 * RI
     a = a * np.clip((t - ta) / 0.12, 0, 1)
     a = a * np.clip((8.0 - ZZ) / 2.0, 0, 1)          # some suave lá no fundo
     if tirar is not None:   # tira a palavra inteira que encosta na chamada
@@ -62,37 +72,41 @@ def fileiras(t, tirar=None):
     ay = a * ama
     return cv2.resize(a, (W, H), interpolation=cv2.INTER_AREA), cv2.resize(ay, (W, H), interpolation=cv2.INTER_AREA)
 
-# ---------- chamada: linhas pintadas no chão (texto, Zperto, Zlonge, largura X, cor, entra) ----------
-TR = json.load(open("transcricao.json")); TR = [w for s in TR for w in s["w"]]
-t_ = lambda j: TR[j]["s"]
-LINHAS = [("PRA PEGAR ESSE SKILL", 3.95, 4.55, 1.55, "b", t_(2)),
-          ("E COLOCAR O CLAUDE", 3.25, 3.78, 1.45, "b", t_(6)),
-          ("PRA TRABALHAR PRA VOCÊ.", 2.62, 3.08, 1.45, "b", t_(10)),
-          ("COMENTA", 1.98, 2.48, 1.05, "b", t_(0)),
-          ("TEXTO", 1.30, 1.88, 0.98, "y", t_(1))]
-AMARELAS = {"SKILL", "CLAUDE"}
+# ---------- chamada AUTOMÁTICA: palavra gigante perto, o que vem antes dela logo acima, o resto mais ao fundo ----------
+def _quebra(ws, mx=22):
+    out, cur = [], []
+    for w in ws:
+        if cur and len(" ".join(x["t"] for x in cur + [w])) > mx: out.append(cur); cur = []
+        cur.append(w)
+    if cur: out.append(cur)
+    if len(out) > 4: out = out[:3] + [[w for l in out[3:] for w in l]]
+    return out
+fundo = _quebra(F0W[KJ + 1:] + [w for f in FR[1:] for w in f])
+LINHAS = []   # (palavras, Z perto, Z longe, largura X, tudo amarelo?)
+for i, l in enumerate(fundo):
+    zn = 2.62 + (len(fundo) - 1 - i) * 0.68
+    LINHAS.append((l, zn, zn + 0.48, float(np.clip(0.075 * len(" ".join(w["t"] for w in l)), 0.8, 1.6)), False))
+if KJ > 0: LINHAS.append((F0W[:KJ], 1.98, 2.48, float(np.clip(0.13 * len(" ".join(w["t"] for w in F0W[:KJ])), 0.6, 1.2)), False))
+LINHAS.append(([F0W[KJ]], 1.30, 1.88, 0.98, True))
 CHAM = []
-for txt, zn, zf, wx, cor, ent in LINHAS:
-    fo = fonte(300); pal = txt.split(" "); esp = fo.getlength(" ") * 0.8
-    larg = [fo.getbbox(p)[2] - fo.getbbox(p)[0] for p in pal]
-    tot = sum(larg) + esp * (len(pal) - 1); l, tp, r, b = fo.getbbox(txt)
+for pal, zn, zf, wx, tudo_y in LINHAS:
+    fo = fonte(300); txts = [w["t"].upper() for w in pal]; esp = fo.getlength(" ") * 0.8
+    larg = [fo.getbbox(p)[2] - fo.getbbox(p)[0] for p in txts]
+    tot = sum(larg) + esp * (len(txts) - 1); l, tp, r, b = fo.getbbox(" ".join(txts))
     hh = b - tp + 20
     a = Image.new("L", (int(tot) + 20, hh)); ay = Image.new("L", a.size)
-    x = 10; tempos = []
-    for j, p in enumerate(pal):
+    x = 10; faixas = []
+    for j, (p, w) in enumerate(zip(txts, pal)):
         pl, ptp, _, _ = fo.getbbox(p)
         ImageDraw.Draw(a).text((x - pl, 10 - tp), p, font=fo, fill=255)
-        if cor == "y" or p.strip(".,") in AMARELAS: ImageDraw.Draw(ay).text((x - pl, 10 - tp), p, font=fo, fill=255)
-        tempos.append((int(x), int(x + larg[j]) + 1)); x += larg[j] + esp
+        if tudo_y or w["chave"]: ImageDraw.Draw(ay).text((x - pl, 10 - tp), p, font=fo, fill=255)
+        faixas.append((int(x), int(x + larg[j]) + 1, w["s"])); x += larg[j] + esp     # palavra a palavra, no tempo da fala
     a = np.asarray(a, np.float32) / 255; ay = np.asarray(ay, np.float32) / 255
     sw, sh = a.shape[1], a.shape[0]
     src = np.float32([[0, 0], [sw, 0], [sw, sh], [0, sh]])
     X0 = (540 - VX) / F0 * (zn + zf) / 2
     dst = proj(np.array([X0 - wx / 2, X0 + wx / 2, X0 + wx / 2, X0 - wx / 2]), np.array([zf, zf, zn, zn])).astype(np.float32)
-    M = cv2.getPerspectiveTransform(src, dst)
-    # palavra a palavra, no tempo da fala
-    j0 = [k for k, w in enumerate(TR) if abs(w["s"] - ent) < 1e-6][0]
-    CHAM.append(dict(a=a, ay=ay, M=M, faixas=[(x0, x1, TR[j0 + k]["s"]) for k, (x0, x1) in enumerate(tempos)]))
+    CHAM.append(dict(a=a, ay=ay, M=cv2.getPerspectiveTransform(src, dst), faixas=faixas))
 
 def chamada(t):
     A = np.zeros((H, W), np.float32); AY = np.zeros_like(A)

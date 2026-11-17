@@ -2,8 +2,10 @@
 pega a textura da pedra. Título fixo em cima, legenda ao lado da pessoa, palavra-chave gigante no patamar.
 Segue a câmera na mão (homografias.json de rastrear_plano.py) e quem passa fica na frente (mask_gente/).
 uso (na pasta da cena): python3 <skill>/scripts/efeitos/escada.py [--ver t1 t2 ...]   (--ver: só quadros de teste)
-AJUSTE: curva dos degraus EA/EB/EC (borda do degrau k em y = EA + EB/(EC - k), medida na grade do quadro 1),
-YP (início do patamar), RS (fração do espelho na tela), lado livre (ZONA) e o bloco de linhas."""
+AJUSTE (cena.json → geometria): degraus [EA, EB, EC] (borda do degrau k em y = EA + EB/(EC - k), medida na grade
+do quadro 1), patamar_k, espelho [fração do espelho na tela, idem no fim], borda_x (onde a escada começa à esquerda),
+titulo_x / lado_x / patamar_x ([centro, largura]) e titulo_v / lado_v / patamar_v (degraus). O texto vem da transcrição:
+1ª frase = título fixo; cada frase seguinte sobe ao lado da pessoa e a palavra-chave vai gigante no patamar."""
 import sys, subprocess, os, json, numpy as np, cv2
 from PIL import Image, ImageDraw, ImageFont
 
@@ -12,20 +14,22 @@ A = "/System/Library/Fonts/Avenir Next.ttc"
 C = "/System/Library/Fonts/Avenir Next Condensed.ttc"
 F = {"a": (A, 8), "ai": (A, 9), "c": (C, 8), "ci": (C, 9)}
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "comum"))
+from frases import cfg
 # ---------- escada: borda do degrau k está em y = EA + EB/(EC - k) (quadro 1) ----------
-EA, EB, EC = -504.61, 11839.81, 16.1
+EA, EB, EC = cfg('degraus', [-504.61, 11839.81, 16.1])   # borda do degrau k: y = EA + EB/(EC - k)
 PITCH, V0, V1 = 170, -0.6, 11.8      # camada: 1 degrau = PITCH px; de v=V0 (topo) a V1 (último degrau)
 LW, LH = W, int((V1 - V0) * PITCH)
 def y_de_v(v): return EA + EB / (EC - v)
 ys = np.arange(H, dtype=np.float32)
 vv = EC - EB / np.maximum(ys - EA, 1)
-YP = y_de_v(10.15)                       # patamar (chão plano): passo linear, sem explodir
+YP = y_de_v(cfg('patamar_k', 10.15))                       # patamar (chão plano): passo linear, sem explodir
 vv = np.where(ys > YP, 10.15 + (ys - YP) / 300, vv)
 # ---------- dobra: cada degrau = espelho (vertical, escuro) + piso. A letra é desenhada "desdobrada"
 # (espelho RL do passo, piso 1-RL) e no vídeo o espelho ocupa RS -> a letra quebra em cada quina.
 RL, CONV, VPX = 0.48, 0.0, 726
 kk = np.floor(vv); fi = vv - kk
-RS = np.where(kk >= 9, 0.27, 0.33)                      # fração do espelho na tela (medido na placa)
+RS = np.where(kk >= 9, cfg('espelho', [0.33, 0.27])[1], cfg('espelho', [0.33, 0.27])[0])                      # fração do espelho na tela (medido na placa)
 esp = (fi < RS) & (ys <= YP)
 fl = np.where(fi < RS, fi / RS * RL, RL + (fi - RS) / (1 - RS) * (1 - RL))
 vl = np.where(ys <= YP, kk + fl, vv)
@@ -42,7 +46,7 @@ luz = np.where(esp & (uf > 0.85), luz * 0.9, luz)
 luz = np.where((~esp) & (ys <= YP) & (uf > 0.93), 1.10, luz)            # bico iluminado
 LUZ = cv2.GaussianBlur(luz.astype(np.float32).reshape(-1, 1), (1, 5), 0).ravel()[:, None, None]
 dentro = ((vv >= V0) & (vv <= V1)).astype(np.float32)
-lado = np.clip((np.arange(W) - 372) / 6, 0, 1).astype(np.float32)   # parede de pedra à esquerda
+lado = np.clip((np.arange(W) - cfg('borda_x', 372)) / 6, 0, 1).astype(np.float32)   # parede de pedra à esquerda
 ZONA = (dentro[:, None] * lado[None]).astype(np.float32)
 HS = [np.array(h, np.float64) for h in json.load(open("homografias.json"))]
 
@@ -56,30 +60,35 @@ def linha(palavras, x, v, sai, maxw, gap=0.24, sy=1.0):
         s2 = int(s * k); l = _larg(t, f, s2)
         IT.append((t, f, s2, xx + l / 2, (v - V0) * PITCH, ent, sai, cor, sy)); xx += l + gap * s2
 
-P = "a"; END = 9.4
-XT, WT = 735, 600        # escada inteira (atrás da pessoa também)
-XD, WD = 866, 396        # lado direito, livre da pessoa
-# fixo lá em cima, grande: ocupa os degraus de cima inteiros
-linha([("TEXTO", "c", 720, -0.15, "b")], XT, 1.85, END, 600, sy=2.45)
-linha([("NA", "c", 400, 0.74, "b"), ("ESCADA", "c", 400, 1.04, "y")], XT, 4.8, END, 600, sy=2.0)
-XP, WP = 735, 610        # patamar embaixo dos pés: palavra-chave gigante
+# ---------- texto AUTOMÁTICO (frases da transcrição; ajuste fino em cena.json) ----------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "comum"))
+from frases import frases, cfg, linhas, config
+P = "a"; END = len(os.listdir("quadros")) / FPS
+XT, WT = cfg("titulo_x", [735, 600])     # centro e largura do título (escada inteira)
+XD, WD = cfg("lado_x", [866, 396])        # centro e largura da coluna livre ao lado da pessoa
+XP, WP = cfg("patamar_x", [735, 610])     # palavra-chave gigante no patamar
+V_TIT = cfg("titulo_v", [1.85, 4.8])      # degraus (v) das 2 linhas do título
+V_LADO = cfg("lado_v", [6.4, 7.8, 9.3])   # degraus das linhas ao lado da pessoa
+V_PAT = cfg("patamar_v", 10.95)
+FR = frases(config().get("max_palavras", 8))
 L = lambda pal, v, sai, tam=200, sy=1.55: linha([(t, "c", tam, e, c) for t, e, c in pal], XD, v, sai, WD, gap=0.18, sy=sy)
-# 2.06 "olha que IRADO."
-L([("OLHA", 2.06, "b")], 6.75, 3.50, 270, 1.7); L([("QUE", 2.32, "b")], 8.6, 3.50, 270, 1.7)
-linha([("IRADO.", "c", 560, 2.52, "y")], XP, 10.95, 3.50, WP)
-# 3.56 "SIMPLES de fazer."
-L([("SIMPLES", 3.56, "b")], 6.75, 5.30, 270, 2.0); L([("DE", 3.96, "b")], 8.6, 5.30, 270, 1.7)
-linha([("FAZER.", "c", 560, 4.06, "y")], XP, 10.95, 5.30, WP)
-# 5.36 "ah, mas não precisa ser SIMPLES,"
-L([("AH,", 5.36, "b"), ("MAS", 5.70, "b")], 6.4, 6.70)
-L([("NÃO", 5.92, "b")], 7.75, 6.70, 220)
-L([("PRECISA", 6.00, "b"), ("SER", 6.14, "b")], 9.3, 6.70, 200, 1.9)
-linha([("SIMPLES,", "c", 560, 6.30, "y")], XP, 10.95, 6.70, WP)
-# 6.72 "porque não é VOCÊ que vai EDITAR."
-L([("PORQUE", 6.72, "b"), ("NÃO", 6.80, "b"), ("É", 6.90, "b")], 6.35, END, 200, 2.0)
-L([("VOCÊ", 7.00, "y")], 7.8, END, 230, 1.7)
-L([("QUE", 7.12, "b"), ("VAI", 7.22, "b")], 9.35, END, 200, 2.0)
-linha([("EDITAR.", "c", 560, 7.32, "y")], XP, 10.95, END, WP)
+# título = 1ª frase, fixo até o fim, ocupando os degraus de cima
+tl = linhas(FR[0], 8)
+if len(tl) > 2: tl = [tl[0], [w for l in tl[1:] for w in l]]
+for j, l in enumerate(tl):
+    linha([(w["t"].upper(), "c", 720 if j == 0 else 400, -0.15 if (j == 0 and w is l[0]) else w["s"], "y" if w["chave"] else "b")
+           for w in l], XT, V_TIT[j], END, WT, sy=2.45 if j == 0 else 2.0)
+# demais frases: palavras ao lado da pessoa (até 3 linhas) + a palavra-chave gigante no patamar
+for k, f in enumerate(FR[1:], 1):
+    sai = FR[k + 1][0]["s"] - 0.02 if k + 1 < len(FR) else END
+    chave = [w for w in f if w["chave"]][-1:]
+    resto = [w for w in f if w not in chave]
+    ls = linhas([dict(w, chave=False) for w in resto], 9) if resto else []
+    if len(ls) > 3: ls = ls[:2] + [[w for l in ls[2:] for w in l]]
+    for v, l in zip(V_LADO if len(ls) == 3 else V_LADO[:1] + V_LADO[2:] if len(ls) == 2 else V_LADO[1:2], ls):
+        L([(w["t"].upper(), w["s"], "b") for w in l], v, sai, 270 if len(l) == 1 else 210, 1.7 if len(l) == 1 else 2.0)
+    if chave:
+        linha([(chave[0]["t"].upper(), "c", 560, chave[0]["s"], "y")], XP, V_PAT, sai, WP)
 
 # ---------- desenho ----------
 _sp = {}

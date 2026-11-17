@@ -1,8 +1,9 @@
 """TEXTO CIRCULAR: câmera de cima, frases em ANÉIS no chão em volta da pessoa. Cada frase nasce num anel novo
 (de dentro pra fora), nenhuma sai de cena e todos giram devagar (sentidos alternados).
 uso (na pasta da cena): python3 <skill>/scripts/efeitos/circulo.py [--ver t1 t2 ...]   (--ver: só quadros de teste)
-AJUSTE: câmera virtual (f0, phi = inclinação do eixo), PES (ponto entre os pés no quadro 1), FRASES
-(índices de palavras da transcrição, altura da letra, raio, "f" lida na frente / "t" lida atrás) e troca de nomes."""
+AJUSTE (cena.json → geometria): pes ([x, y] entre os pés no quadro 1), inclinacao (graus; câmera do alto ~45),
+focal, aneis_frente (quantos anéis lidos embaixo), raio_frente, raio_fundo, giro_graus_s. As frases, tamanhos e
+raios saem da transcrição: anéis da frente cabem na volta, os de trás cabem na largura da tela."""
 import sys, subprocess, os, json, numpy as np, cv2
 from PIL import Image, ImageDraw, ImageFont
 
@@ -15,13 +16,15 @@ HS = [np.array(h, np.float64) for h in json.load(open("homografias.json"))]
 N = len(HS)
 
 # ---------- chão (quadro 1): câmera virtual f=1550, olhando 45° pra baixo, altura = 1 ----------
-f0, cx, cy = 1550, 540, 960
-phi = np.radians(45)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "comum"))
+from frases import cfg
+f0, cx, cy = cfg('focal', 1550), 540, 960
+phi = np.radians(cfg('inclinacao', 45))        # inclinação do eixo da câmera (graus abaixo do horizonte)
 dv = np.array([0, -np.sin(phi), np.cos(phi)]); uv = np.array([0, np.cos(phi), np.sin(phi)])
 def proj(X, Z):
     P = np.stack([X, -np.ones_like(X), Z], -1)
     return np.stack([cx + f0 * P[..., 0] / (P @ dv), cy - f0 * (P @ uv) / (P @ dv)], -1)
-PES = (547, 1222)                                  # centro dos anéis: entre os pés, no chão
+PES = tuple(cfg('pes', [547, 1222]))                                # centro dos anéis: entre os pés, no chão
 Zs = np.linspace(0.1, 5, 40000); Zf = Zs[np.argmin(abs(proj(np.zeros_like(Zs), Zs)[:, 1] - PES[1]))]
 Xf = (PES[0] - cx) / f0 * (np.array([0, -1, Zf]) @ dv)
 
@@ -35,25 +38,28 @@ RR = np.hypot(xx - CC, yy - CC) / S                # raio (unidades de chão)
 TT = np.arctan2(yy - CC, xx - CC)                  # ângulo (90° = embaixo, perto da câmera)
 del yy, xx
 
-# ---------- frases: (palavra, início, cor) por anel; altura da letra em unidades de chão ----------
-TR = json.load(open("transcricao.json")); TR = TR["words"] if isinstance(TR, dict) else TR
-TR = [w for seg in TR for w in seg["w"]] if isinstance(TR[0].get("w"), list) else TR
-def P(ini, fim, alt, amarelas=(), troca=None):  # -> (palavras, alt)
-    ws = TR[ini:fim]; out = []
-    for j, w in enumerate(ws):
-        t = (troca or {}).get(j, w["w"]).upper()
-        out.append((t, w["s"], "y" if j in amarelas else "b"))
-    return out, alt
-# (palavras, altura, raio, lado): "f" = lida na frente (embaixo), "t" = lida atrás dela (no fundo)
-FRASES = [P(0, 10, 0.036, (4,)) + (0.170, "f"),               # E esse é um CLÁSSICO que eu amo, vocês sabem.
-          P(10, 13, 0.050, (0, 1, 2)) + (0.226, "f"),         # CÂMERA DE CIMA,
-          P(13, 16, 0.050, ()) + (0.289, "f"),                # você aqui embaixo,
-          P(16, 20, 0.062, (1, 2, 3)) + (0.358, "f"),         # o TEXTO NO CHÃO.
-          P(20, 21, 0.110, (0,)) + (0.74, "t"),               # MARAVILHOSO,
-          P(21, 25, 0.080, (1,)) + (0.92, "t"),               # super RÁPIDO de fazer
-          P(25, 31, 0.066, (5,)) + (1.12, "t"),               # e você não precisa saber EDIÇÃO.
-          P(31, 39, 0.070, (2,), {2: "Claude"}) + (1.33, "t")]  # é o CLAUDE que vai fazer pra você.
-R0, GAP, OMEGA = 0.20, 0.014, np.radians(7)       # raio do 1º anel, folga, giro (rad/s)
+# ---------- frases AUTOMÁTICAS: uma por anel, de dentro pra fora ----------
+from frases import frases, cfg, config
+FR = frases(config().get("max_palavras", 8))
+NF = cfg("aneis_frente", min(4, (len(FR) + 1) // 2))   # os primeiros anéis são lidos na frente (embaixo)
+_fo1 = ImageFont.truetype(FONTE[0], int(S * 1.18), index=FONTE[1])
+def _larg(pal): return (sum(_fo1.getlength(t) for t, _, _ in pal) + _fo1.getlength(" ") * 0.9 * (len(pal) - 1)) / S
+FRASES = []   # (palavras, altura da letra, raio, lado): "f" = lida na frente, "t" = lida atrás da pessoa
+r = cfg("raio_frente", 0.17); alt_ant = None
+for k, f in enumerate(FR):
+    pal = [(w["t"].upper(), w["s"], "y" if w["chave"] else "b") for w in f]
+    lp = _larg(pal)          # largura do texto (unidades de chão) por unidade de altura
+    if k < NF:
+        if alt_ant is not None: r = r + alt_ant / 2 + 0.012 + 0.025
+        alt = float(np.clip(4.6 * r / lp, 0.034, 0.065))         # cabe na volta (passa por trás das pernas)
+        if alt_ant is not None: r = r - 0.025 + alt / 2
+        lado = "f"
+    else:
+        r = cfg("raio_fundo", 0.74) if k == NF else max(r * 1.21, r + alt_ant / 2 + alt / 2 + 0.05)
+        alt = float(np.clip(1.15 * r / lp, 0.05, 0.11))           # cabe no fundo, sem sair da tela
+        lado = "t"
+    FRASES.append((pal, alt, r, lado)); alt_ant = alt
+OMEGA = np.radians(cfg("giro_graus_s", 7))       # giro (rad/s)
 
 _fo = {}
 def fonte(px):

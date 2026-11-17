@@ -21,7 +21,15 @@ Requisitos: macOS (recorte pelo Vision da Apple via `swift`; fontes Avenir do si
 | Chão cheio de TEXTO + chamada (CTA) | `chao_cheio.py` | caminho/corredor, pessoa vindo | na mão ok |
 | Texto na parede | `scripts/parede/` | parede lateral lisa | tripé |
 
-Cada script de efeito é uma **receita**: no topo tem a geometria (onde fica o chão/escada) e um bloco com as frases, tamanhos e tempos. Você adapta esse bloco ao vídeo da pessoa e confere com `--ver t1 t2 ...` (gera `ver_*.jpg` só daqueles instantes) antes de renderizar tudo. Copie o script para a pasta do projeto se for mexer muito.
+**O texto é automático e vem da fala de cada vídeo**: `scripts/comum/frases.py` lê a `transcricao.json`, divide em frases (pausas e pontuação), escolhe a palavra-chave de cada uma e cada efeito monta o layout sozinho (título, linhas, anéis, chamada…). Nada é fixo de um vídeo específico.
+
+Por cena você só ajusta um `cena.json` (exemplo em `exemplos/cena.json`):
+- `trocas` — corrige palavras da transcrição (ex.: `{"cloud": "Claude"}`);
+- `destaques` — as palavras-chave (amarelas/gigantes); sem isso, escolhe a palavra de conteúdo mais longa de cada frase;
+- `max_palavras` — tamanho máximo de uma frase;
+- `geometria` — os números do LUGAR (trapézio do chão, curva dos degraus, ponto de fuga, ponto entre os pés…). O topo de cada script lista quais lê e o padrão.
+
+Veja as frases antes: `python3 -I <skill>/scripts/comum/frases.py` (mostra cada frase com a palavra-chave em `*MAIÚSCULAS*`). Confira o efeito com `--ver t1 t2 ...` (gera `ver_*.jpg` só daqueles instantes) antes de renderizar tudo.
 
 ## Antes de começar
 
@@ -37,7 +45,7 @@ ffmpeg -i bruto.MOV -vf "scale=1080:1920:force_original_aspect_ratio=increase,cr
 mkdir -p quadros mask && ffmpeg -i base.mp4 -q:v 2 quadros/%05d.jpg
 python3 -I <skill>/scripts/comum/transcrever.py base.mp4          # -> transcricao.json (tempo por palavra)
 ```
-Mostre a transcrição e corrija nomes próprios (ex.: "Cloud" → "Claude") sem mudar a quantidade de palavras. Monte as frases do efeito com os tempos `s` de cada palavra.
+Mostre as frases (`frases.py`) e corrija nomes próprios com `trocas` no `cena.json` (ex.: "Cloud" → "Claude"). Ajuste `destaques` se a palavra-chave escolhida não for a melhor.
 
 ### 2. Recorte da pessoa
 ```bash
@@ -62,16 +70,17 @@ python3 -I <skill>/scripts/comum/rastrear_lk.py                         # altern
 ```
 Confira o tremor: projete 4 pontos da superfície por todas as homografias e meça o salto quadro a quadro — tem que ficar < ~1 px. Se aparecer salto grande num trecho (gente cobrindo a superfície, câmera mexendo rápido), troque para `rastrear_lk.py` ou restrinja a área.
 
-### 4. Geometria do efeito
+### 4. Geometria do lugar (cena.json → geometria)
 ```bash
 python3 -I <skill>/scripts/comum/grade.py base.mp4 --t 0.5 -o grade.jpg
 ```
-- **Chão (chao_e_painel, pisar):** `QUAD` = trapézio do chão na tela (bordas laterais apontando pro ponto de fuga do caminho).
-- **Chão cheio / círculo:** câmera virtual. Ache o ponto de fuga cruzando duas linhas paralelas do chão (bordas do caminho); `VX, VY` = ponto de fuga, focal ~1550 (iPhone 1x, vídeo vertical). No círculo, `phi` é a inclinação do eixo (câmera do alto ~45°) e `PES` o ponto entre os pés; desenhe círculos de teste no quadro 1 até parecerem deitados no chão.
-- **Escada:** na grade, anote o y da borda de 3–4 degraus e ajuste `y = EA + EB/(EC - k)`; `YP` = onde começa o patamar plano; `RS` = fração do degrau que é espelho (parte vertical) na tela. A letra é desenhada "desdobrada" e quebra em cada quina — é isso que dá a sensação de pintada.
-- **Contorno:** não tem geometria; ajuste `CHAO` (y dos pés, onde o caminho é cortado) e as janelas de fundo do `phaseCorrelate`.
+- **Chão (chao_e_painel, pisar):** `quad_chao` = trapézio do chão na tela (bordas laterais apontando pro ponto de fuga do caminho). No painel, `pico` = palavra que lota a tela quando é falada (ex.: "texto"). No pisar, a posição vem dos pés no recorte; `frente` empurra a frase mais pra frente.
+- **Chão cheio / círculo:** câmera virtual. Ache o ponto de fuga cruzando duas linhas paralelas do chão (bordas do caminho): `fuga` = [x, y], `focal` ~1550 (iPhone 1x, vídeo vertical); `chao_poligono` = onde é chão. No círculo, `inclinacao` é o ângulo do eixo (câmera do alto ~45°) e `pes` o ponto entre os pés; ajuste até os anéis parecerem deitados no chão.
+- **Escada:** na grade, anote o y da borda de 3–4 degraus e ajuste `degraus` = [EA, EB, EC] em `y = EA + EB/(EC - k)`; `patamar_k` = onde começa o patamar plano; `espelho` = fração do degrau que é espelho (parte vertical) na tela; `borda_x`, `lado_x` (coluna livre ao lado da pessoa). A letra é desenhada "desdobrada" e quebra em cada quina — é isso que dá a sensação de pintada.
+- **Contorno:** `chao_y` (y dos pés, onde o caminho é cortado) e `janelas_fundo` (áreas de fundo parado para compensar a tremidinha).
 
-### 5. Texto: estilo e ritmo
+### 5. Texto: estilo e ritmo (já é o padrão dos efeitos)
+- Como cada efeito usa as frases: chão+painel = palavra-chave gigante atrás, resto no chão; pisar = cada frase nasce à frente dos pés; escada = 1ª frase vira título fixo, as outras sobem ao lado da pessoa e a palavra-chave vai gigante no patamar; contorno = 1ª frase anda em volta do corpo, as outras aparecem grandes no alto; círculo = um anel por frase (frente, depois atrás); chão cheio = palavra-chave da 1ª frase gigante + cobre o chão, o resto da fala em linhas ao fundo.
 - Palavra por palavra no tempo da fala; nada de itálico fino, letra de mão ou cores médias que somem no fundo.
 - Varie tamanhos: palavra-chave gigante, conectivos menores. Gancho forte já no 1º quadro da abertura.
 - Muito texto funciona: pico de "TEXTO TEXTO TEXTO" no painel, anéis que se acumulam sem sair de cena, chão inteiro coberto no fim.

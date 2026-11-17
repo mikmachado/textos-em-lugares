@@ -1,7 +1,8 @@
 """CHÃO + PAINEL: texto branco deitado no CHÃO (perspectiva) e palavras GIGANTES num painel ATRÁS da pessoa
 (ela fica na frente), com um pico de muito TEXTO. Câmera parada (tripé).
 uso (na pasta da cena): python3 <skill>/scripts/efeitos/chao_e_painel.py [--ver t1 t2 ...]   (--ver: só quadros de teste)
-AJUSTE: QUAD (trapézio do chão) e o bloco "linha do tempo" com as frases e tempos da transcrição."""
+AJUSTE (cena.json → geometria): quad_chao (trapézio do chão na tela), painel_y, chao_y, pico (palavra que lota a tela),
+gancho (1ª frase gigante no 1º quadro). As frases e palavras-chave vêm da transcrição (comum/frases.py)."""
 import sys, subprocess, os, numpy as np, cv2
 from PIL import Image, ImageDraw, ImageFont
 
@@ -12,7 +13,7 @@ F = {"a": (A, 8), "ai": (A, 9), "c": (C, 8), "ci": (C, 9)}
 
 # ---------- chão: retângulo plano LW x LH -> trapézio com fuga em (540,680) ----------
 LW, LH = 1600, 1780
-QUAD = np.float32([[318, 1080], [762, 1080], [1300, 2050], [-220, 2050]])
+QUAD = np.float32(__import__('json').load(open('cena.json')).get('geometria', {}).get('quad_chao', [[318, 1080], [762, 1080], [1300, 2050], [-220, 2050]]) if os.path.exists('cena.json') else [[318, 1080], [762, 1080], [1300, 2050], [-220, 2050]])   # trapézio do chão (tela)
 M = cv2.getPerspectiveTransform(np.float32([[0, 0], [LW, 0], [LW, LH], [0, LH]]), QUAD)
 Minv = np.linalg.inv(M)
 
@@ -47,45 +48,50 @@ def fundo(t, f, s, x, y, ent, sai, cor="b", maxw=None):
 def chao(t, f, s, x, y, ent, sai, cor="b", maxw=None):
     linha("chao", [(t, f, s, ent, cor)], x, y, sai, maxw=maxw)
 
-P = "a"   # texto corrido: Avenir Next Heavy
-# 0–0.95  GANCHO: "DEPOIS DESSE VÍDEO" gigante atrás dela, já no 1º quadro
-fundo("DEPOIS", "c", 420, 540, 300, -0.15, 0.95)
-fundo("DESSE", "c", 420, 540, 640, 0.20, 0.95)
-fundo("VÍDEO,", "c", 420, 540, 985, 0.40, 0.95, "y")
-# 1.0–2.2  "você vai ver como é FÁCIL"
-linha("chao", [("você", P, 240, 1.00, "b"), ("vai", P, 240, 1.06, "b"), ("ver", P, 240, 1.18, "b")], 540, 1470, 2.18)
-linha("chao", [("como", P, 240, 1.30, "b"), ("é", P, 240, 1.52, "b")], 540, 1690, 2.18)
-fundo("FÁCIL", "c", 600, 540, 520, 1.62, 2.18, "y")
-# 2.18–4.74 "você fazer um vídeo de CONTEÚDO"
-linha("chao", [("você", P, 240, 2.18, "b"), ("fazer", P, 240, 2.64, "b"), ("um", P, 240, 3.12, "b")], 540, 1470, 4.74)
-linha("chao", [("vídeo", P, 240, 3.64, "b"), ("de", P, 240, 4.04, "b")], 540, 1690, 4.74)
-fundo("CONTEÚDO", "c", 600, 540, 540, 4.18, 4.74)
-# 4.74–8.4 PICO: chão e fundo lotados, sem sobrepor
-FIM = 8.42
-linha("chao", [("com", P, 240, 4.74, "b"), ("TEXTO", "c", 420, 5.24, "y")], 540, 1420, FIM)
-linha("chao", [("aparecendo", P, 240, 5.72, "b"), ("em", P, 240, 6.40, "b"), ("vários", P, 240, 6.64, "b")], 540, 1600, FIM)
-linha("chao", [("LUGARES", "c", 400, 6.98, "y"), ("DIFERENTES.", "c", 400, 7.54, "y")], 540, 1790, FIM)
-# fundo: parede de TEXTO cobrindo a tela toda, inclusive atrás dela (ela fica na frente)
-import random
-random.seed(7)
-fileiras = [(110, 3), (330, 2), (560, 3), (790, 2), (1020, 3)]
-pos = []
-for y, n in fileiras:
-    xs = [180, 540, 900] if n == 3 else [275, 805]
-    for x in xs: pos.append((x, y, 320 if n == 3 else 450))
-ordem = list(range(len(pos))); random.shuffle(ordem)
-for k, j in enumerate(ordem):
-    x, y, mw = pos[j]
-    fundo("TEXTO", "c", 600, x, y, 5.24 + k * 0.17, FIM, "y" if j in (5, 9) else "b", maxw=mw)
-# 8.62–11.0 "e tudo sem você manjar de EDIÇÃO"
-linha("chao", [("e", P, 240, 8.62, "b"), ("tudo", P, 240, 8.98, "b"), ("sem", P, 240, 9.42, "b"), ("você", P, 240, 9.74, "b")], 540, 1470, 11.02)
-linha("chao", [("manjar", P, 240, 10.02, "b"), ("de", P, 240, 10.40, "b")], 540, 1690, 11.02)
-fundo("EDIÇÃO.", "c", 600, 540, 540, 10.54, 11.02, "y")
-# 11.1–fim "o CLAUDE vai fazer pra você."
-END = 16.2
-fundo("CLAUDE", "c", 600, 540, 520, 11.30, END, "y")
-linha("chao", [("vai", P, 240, 11.58, "b"), ("fazer", P, 240, 12.00, "b")], 540, 1470, END)
-linha("chao", [("pra", P, 260, 12.40, "b"), ("você.", P, 260, 12.56, "b")], 540, 1690, END)
+# ---------- linha do tempo AUTOMÁTICA (frases da transcrição; ajuste fino em cena.json) ----------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "comum"))
+from frases import frases, cfg
+P = "a"                                   # texto corrido: Avenir Next Heavy; "c" = Condensed Heavy (palavra-chave)
+END = len(os.listdir("quadros")) / FPS
+FR = frases()
+PAINEL_Y = cfg("painel_y", 520)           # altura (tela) da palavra gigante atrás da pessoa
+CHAO_Y = cfg("chao_y", [1470, 1690])      # alturas (tela) das 2 linhas no chão
+PICO = (cfg("pico", "") or "").lower()    # palavra que vira "parede" repetida quando é falada (ex.: "texto")
+
+def _sai(k): return FR[k + 1][0]["s"] - 0.02 if k + 1 < len(FR) else END
+for k, f in enumerate(FR):
+    sai = _sai(k)
+    if k == 0 and cfg("gancho", True) and len(f) <= 3:
+        # GANCHO: a 1ª frase gigante atrás da pessoa já no 1º quadro
+        for j, w in enumerate(f):
+            fundo(w["t"].upper(), "c", 420, 540, [300, 640, 985][j], -0.15 if j == 0 else w["s"], sai, "y" if w["chave"] else "b")
+        continue
+    pico = PICO and any(w["t"].lower().strip(".,!?") == PICO for w in f)
+    chave = [w for w in f if w["chave"]][:1]
+    resto = [w for w in f if w not in chave]
+    if chave and not pico:
+        fundo(chave[0]["t"].upper(), "c", 600, 540, PAINEL_Y, chave[0]["s"], sai, "y")
+    # o resto no chão, em até 2 linhas equilibradas
+    if not chave or pico: resto = f
+    tam = [len(w["t"]) + 1 for w in resto]; corte = 0
+    if len(resto) > 2 or sum(tam) > 16:
+        corte = min(range(1, len(resto)), key=lambda i: abs(sum(tam[:i]) - sum(tam[i:])))
+    for y, grupo in zip(CHAO_Y, [resto[:corte], resto[corte:]] if corte else [resto]):
+        if grupo:
+            linha("chao", [(w["t"].upper() if w["chave"] else w["t"], "c" if w["chave"] else P, 420 if w["chave"] else 240, w["s"], "y" if w["chave"] else "b")
+                           for w in grupo], 540, y, sai)
+    if pico:
+        # pico: parede de PICO cobrindo a tela toda atrás da pessoa, até o fim da frase
+        t0 = [w["s"] for w in f if w["t"].lower().strip(".,!?") == PICO][0]
+        import random
+        random.seed(7)
+        pos = []
+        for y, n in [(110, 3), (330, 2), (560, 3), (790, 2), (1020, 3)]:
+            for x in ([180, 540, 900] if n == 3 else [275, 805]): pos.append((x, y, 320 if n == 3 else 450))
+        ordem = list(range(len(pos))); random.shuffle(ordem)
+        for q, j in enumerate(ordem):
+            x, y, mw = pos[j]
+            fundo(PICO.upper(), "c", 600, x, y, t0 + q * 0.17, sai, "y" if j in (5, 9) else "b", maxw=mw)
 
 # ---------- desenho ----------
 _sp = {}
