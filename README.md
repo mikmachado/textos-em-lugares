@@ -1,3 +1,20 @@
+> [!IMPORTANT]
+> **Esta skill mudou de endereço.** A versão atual (e todas as próximas atualizações) está em
+> **[github.com/mikmachado/skills-publicas → edicao-de-video/textos-em-lugares](https://github.com/mikmachado/skills-publicas/tree/main/edicao-de-video/textos-em-lugares)**.
+> Este repositório ficou congelado e não recebe mais atualizações.
+
+Para instalar a versão atual:
+
+```bash
+git clone https://github.com/mikmachado/skills-publicas.git
+mkdir -p ~/.claude/skills
+cp -R skills-publicas/edicao-de-video/textos-em-lugares ~/.claude/skills/
+```
+
+Lá também estão as outras skills de edição de vídeo do Instagram [@mik_machado](https://www.instagram.com/mik_machado/).
+
+---
+
 # Textos em lugares — skill para o Claude Code
 
 Coloca a legenda do seu vídeo **dentro do cenário**, como se o texto estivesse pintado no lugar, com você passando na frente:
